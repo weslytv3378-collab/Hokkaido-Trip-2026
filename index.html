@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>北海道之旅 1/9-1/15</title>
+    <!-- PWA 設定 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0066cc">
     
     <!-- 1. 核心程式庫 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -1036,6 +1039,14 @@
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
+        <!-- PWA Service Worker 註冊 -->
+<script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("service-worker.js")
+      .then(() => console.log("Service Worker registered"))
+      .catch(err => console.log("SW registration failed:", err));
+  }
     </script>
 </body>
+
 </html>
