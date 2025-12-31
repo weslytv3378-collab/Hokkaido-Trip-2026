@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>北海道之旅 1/9-1/15</title>
+    
+    <!-- 1. 核心程式庫 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- 2. 樣式庫 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Markdown 解析器 (讓 AI 回覆更好看) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <!-- 3. 手機拖曳 Polyfill -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/default.css">
+    <script src="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mobile-drag-drop@2.3.0-rc.2/scroll-behaviour.min.js"></script>
+
+    <script>
+        // 初始化手機拖曳功能
+        var MobileDragDrop = MobileDragDrop || {};
+        MobileDragDrop.polyfill({
+            dragImageTranslateOverride: MobileDragDrop.scrollBehaviourDragImageTranslateOverride
+        });
+        
+        // 修正：已移除原本會導致無法滑動的 touchmove 監聽器
+    </script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        
+        body { 
+            font-family: 'Noto Sans TC', sans-serif; 
+            background-color: #f7f3e8; 
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: none; /* 防止整頁下拉重新整理，但允許內部捲動 */
+            user-select: none;
+        }
+        
+        /* 恢復輸入框的文字選取功能 */
+        input, textarea {
+            user-select: text;
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        
+        /* AI 對話框動畫 */
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+        }
+
+        /* 拖曳時的樣式 */
+        .dragging {
+            opacity: 0.5;
+            background-color: #f0fdf4;
+            border: 2px dashed #556b2f;
+            transform: scale(0.98);
+        }
+        
+        /* 修正手機拖曳時的預覽圖 */
+        .dnd-drag-image-preview {
+            background-color: white;
+            padding: 10px;
+            border-radius: 12px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+            opacity: 0.9;
+            width: 300px;
+            font-weight: bold;
+            color: #556b2f;
+            border: 2px solid #556b2f;
+        }
+
+        /* Markdown 樣式微調 */
+        .prose p { margin-bottom: 0.5em; }
+        .prose ul { list-style-type: disc; padding-left: 1.2em; margin-bottom: 0.5em; }
+        .prose strong { color: #556b2f; font-weight: 800; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+        const apiKey = ""; // Gemini API Key will be injected by the environment
+
+        // --- Gemini API 呼叫函式 ---
+        const callGeminiAPI = async (messages) => {
+            if (!apiKey) return "錯誤：未設定 API Key";
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            
+            // 轉換對話紀錄格式
+            const contents = messages.map(msg => ({
+                role: msg.role === 'user' ? 'user' : 'model',
+                parts: [{ text: msg.content }]
+            }));
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents })
+                });
+
+                const data = await response.json();
+                if (data.error) throw new Error(data.error.message);
+                return data.candidates[0].content.parts[0].text;
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                return "抱歉，AI 導遊目前有點忙碌，請稍後再試。(連線錯誤)";
+            }
+        };
+
+        // --- 優化後的圖示元件 (效能修正) ---
+        const Icon = ({ name, size = 18, className = "" }) => {
+            const iconRef = useRef(null);
+
+            useEffect(() => {
+                if (window.lucide && iconRef.current) {
+                    window.lucide.createIcons({
+                        root: iconRef.current,
+                        nameAttr: 'data-lucide',
+                        attrs: { class: className }
+                    });
+                }
+            }, [name, className]);
+
+            return <span ref={iconRef} style={{ display: 'inline-flex', verticalAlign: 'middle' }}>
+                <i data-lucide={name} style={{ width: size, height: size }}></i>
+            </span>;
+        };
+
+        // --- AI 聊天室元件 ---
+        const AIChatWidget = ({ isOpen, onClose, currentDayData }) => {
+            const [messages, setMessages] = useState([
+                { role: 'model', content: `嗨！我是你的北海道 AI 導遊 ✨\n\n您正在查看 **${currentDayData.date} (${currentDayData.weekday})** 的行程。\n我有看過行程了，想問什麼都可以喔！` }
+            ]);
+            const [inputValue, setInputValue] = useState('');
+            const [isLoading, setIsLoading] = useState(false);
+            const messagesEndRef = useRef(null);
+
+            const scrollToBottom = () => {
+                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            };
+
+            useEffect(() => {
+                if (isOpen) scrollToBottom();
+            }, [messages, isOpen]);
+            
+            // 當天換了，重置歡迎訊息
+            useEffect(() => {
+                setMessages([
+                     { role: 'model', content: `嗨！我是你的北海道 AI 導遊 ✨\n\n您正在查看 **${currentDayData.date} (${currentDayData.weekday})** 的行程。\n天氣預報是 ${currentDayData.temp} ${currentDayData.weather === 'snow' ? '下雪 ❄️' : ''}。\n想問什麼都可以喔！` }
+                ]);
+            }, [currentDayData.id]);
+
+            const handleSend = async (text = inputValue) => {
+                if (!text.trim()) return;
+                
+                const userMsg = { role: 'user', content: text };
+                setMessages(prev => [...prev, userMsg]);
+                setInputValue('');
+                setIsLoading(true);
+                
+                const contextPrompt = `
+                    [系統指示: 你是一位專業、熱情且幽默的北海道旅遊導遊。]
+                    [目前使用者正在查看的行程如下:]
+                    日期: ${currentDayData.date} (${currentDayData.weekday})
+                    天氣: ${currentDayData.weather}, 氣溫: ${currentDayData.temp}
+                    今日標題: ${currentDayData.title}
+                    詳細行程項目: ${JSON.stringify(currentDayData.items.map(i => `${i.time} ${i.title} (${i.location}) - ${i.note || ''} - ${i.guide || ''}`))}
+                    
+                    請根據以上行程資訊回答使用者的問題。如果使用者問推薦，請根據行程地點推薦順路的。
+                    請用繁體中文回答，語氣輕鬆活潑，適當使用 emoji。
+                    
+                    使用者問題: ${text}
+                `;
+
+                const apiMessages = [
+                    ...messages.slice(-4), 
+                    { role: 'user', content: contextPrompt }
+                ];
+
+                const replyText = await callGeminiAPI(apiMessages);
+                
+                setMessages(prev => [...prev, { role: 'model', content: replyText }]);
+                setIsLoading(false);
+            };
+
+            const quickActions = [
+                { label: "✨ 分析今日行程", prompt: "請幫我分析今天的行程安排是否順暢？有沒有什麼時間太趕的地方？或是建議可以多加注意的小提醒？" },
+                { label: "❄️ 穿搭建議", prompt: "根據今天的天氣和行程活動（例如室內室外比例），建議我該怎麼穿衣服？" },
+                { label: "🍜 附近隱藏美食", prompt: "請根據我今天行程中的地點，推薦 2-3 家順路且高評價的隱藏版美食（午餐或晚餐）。" },
+                { label: "🎁 必買伴手禮", prompt: "今天的行程地點附近有什麼「必買」的限定伴手禮嗎？" },
+            ];
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="fixed inset-0 z-[60] flex items-end sm:items-center sm:justify-center pointer-events-none">
+                    {/* 背景遮罩 */}
+                    <div className="absolute inset-0 bg-black/30 backdrop-blur-sm pointer-events-auto" onClick={onClose} />
+                    
+                    {/* 聊天視窗 */}
+                    <div className="bg-[#fdfbf7] w-full sm:w-[400px] h-[80vh] sm:h-[600px] rounded-t-[32px] sm:rounded-[32px] shadow-2xl flex flex-col pointer-events-auto animate-slide-up overflow-hidden relative">
+                        {/* Header */}
+                        <div className="bg-[#556b2f] text-white p-4 flex justify-between items-center shadow-md z-10">
+                            <div className="flex items-center gap-2">
+                                <div className="bg-white/20 p-2 rounded-full">
+                                    <Icon name="sparkles" size={20} className="text-yellow-300" />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-lg">AI 貼身導遊</h3>
+                                    <p className="text-[10px] opacity-80">Powered by Gemini ✨</p>
+                                </div>
+                            </div>
+                            <button onClick={onClose} className="p-2 hover:bg-white/20 rounded-full transition-colors">
+                                <Icon name="x" size={24} />
+                            </button>
+                        </div>
+
+                        {/* Messages Area */}
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-dots">
+                            {messages.map((msg, idx) => (
+                                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`max-w-[85%] p-4 rounded-2xl shadow-sm text-sm leading-relaxed ${
+                                        msg.role === 'user' 
+                                            ? 'bg-[#556b2f] text-white rounded-tr-none' 
+                                            : 'bg-white text-gray-700 rounded-tl-none border border-gray-100'
+                                    }`}>
+                                        {msg.role === 'model' 
+                                            ? <div className="prose prose-sm" dangerouslySetInnerHTML={{ __html: marked.parse(msg.content) }} />
+                                            : msg.content
+                                        }
+                                    </div>
+                                </div>
+                            ))}
+                            {isLoading && (
+                                <div className="flex justify-start">
+                                    <div className="bg-white p-4 rounded-2xl rounded-tl-none border border-gray-100 shadow-sm flex gap-2 items-center">
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0s'}} />
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}} />
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.4s'}} />
+                                    </div>
+                                </div>
+                            )}
+                            <div ref={messagesEndRef} />
+                        </div>
+
+                        {/* Quick Actions (Horizontal Scroll) */}
+                        <div className="bg-gray-50/50 p-2 border-t border-gray-100">
+                             <div className="flex gap-2 overflow-x-auto no-scrollbar px-2 pb-2">
+                                {quickActions.map((action, idx) => (
+                                    <button 
+                                        key={idx}
+                                        onClick={() => handleSend(action.prompt)}
+                                        disabled={isLoading}
+                                        className="flex-shrink-0 bg-white border border-[#556b2f]/20 text-[#556b2f] px-3 py-1.5 rounded-full text-xs font-bold shadow-sm hover:bg-[#556b2f] hover:text-white transition-all whitespace-nowrap active:scale-95 disabled:opacity-50"
+                                    >
+                                        {action.label}
+                                    </button>
+                                ))}
+                             </div>
+                        </div>
+
+                        {/* Input Area */}
+                        <div className="p-4 bg-white border-t border-gray-100 pb-8 sm:pb-4">
+                            <div className="flex gap-2 items-end">
+                                <textarea 
+                                    value={inputValue}
+                                    onChange={(e) => setInputValue(e.target.value)}
+                                    placeholder="問問導遊..."
+                                    className="flex-1 bg-gray-100 rounded-2xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#556b2f] resize-none max-h-24"
+                                    rows={1}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            handleSend();
+                                        }
+                                    }}
+                                />
+                                <button 
+                                    onClick={() => handleSend()}
+                                    disabled={!inputValue.trim() || isLoading}
+                                    className="bg-[#556b2f] text-white p-3 rounded-full shadow-lg shadow-[#556b2f]/30 hover:bg-[#445725] active:scale-90 transition-all disabled:opacity-50 disabled:shadow-none"
+                                >
+                                    <Icon name="send" size={20} />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 完整行程資料 ---
+        const defaultItinerary = [
+            {
+                id: 'day1',
+                date: '1/9',
+                weekday: '週五',
+                title: '出發！前往北國札幌',
+                weather: 'snowflake',
+                temp: '-2°C',
+                items: [
+                    { 
+                        id: 'd1-0', time: '22:40', endTime: '23:40', type: 'transport', transportMode: '客運', title: '松山機場 → 桃園機場', location: '松山機場', note: '搭乘國光1840客運 (1/8 出發)', 
+                        guide: '深夜出發要注意保暖，車上補眠一下！\n\n【推薦伴手禮】：(出發前省點錢)\n【推薦購物】：機場便利商店備點零食', 
+                        expenses: [] 
+                    },
+                    { 
+                        id: 'd1-1', time: '02:55', endTime: '06:25', type: 'transport', transportMode: '飛機', title: '桃園 → 名古屋中部', location: '桃園機場', note: '樂桃航空', 
+                        guide: '紅眼班機辛苦了！樂桃機上位子較小，建議帶個頸枕。\n\n【推薦伴手禮】：免稅店鳳梨酥(送日本友人)\n【推薦購物】：機場免稅店', 
+                        expenses: [] 
+                    },
+                    { 
+                        id: 'd1-2', time: '06:25', endTime: '08:10', type: 'todo', title: '入境、轉機手續', location: '名古屋中部機場', note: '入境完成、出關、前往ANA櫃台辦托運行李', 
+                        guide: '轉機時間雖然充裕，但入境和重新掛行李還是要抓緊時間喔！\n\n【推薦伴手禮】：蝦餅(名古屋名產)、小倉紅豆吐司抹醬、手羽先口味餅乾\n【推薦購物】：機場 4F 藍天城 (Sky Town)', 
+                        expenses: [] 
+                    },
+                    { 
+                        id: 'd1-3', time: '08:40', endTime: '10:25', type: 'transport', transportMode: '飛機', title: '名古屋中部 → 新千歲', location: '名古屋中部機場', note: 'ANA航空', 
+                        guide: 'ANA 國內線舒適很多，可以稍微放鬆，看看窗外的雪景。', 
+                        expenses: [] 
+                    },
+                    { 
+                        id: 'd1-4', time: '10:25', endTime: '11:20', type: 'todo', title: '領取行李 & JR PASS', location: '新千歲機場', note: '領取行李、JR PASS及指定席座位票', 
+                        guide: '新千歲機場非常大且熱鬧！領完 PASS 別忘了確認指定席座位票。\n\n【推薦伴手禮】：Kinotoya 起司塔、北菓樓夢不思議泡芙、美瑛選果玉米麵包\n【推薦購物】：哆啦A夢空中樂園商店 (3F)、Smile Road', 
+                        expenses: [] 
+                    },
+                    { 
+                        id: 'd1-5', time: '11:20', endTime: '11:57', type: 'transport', transportMode: 'JR', title: '新千歲機場 → 札幌', location: '新千歲機場站', note: 'JR 快速 Airport', 
+                        guide: '快速 Airport 號大約 40 分鐘就到市區，沿途風景開始變白囉。', 
+                        expenses: [] 
+                    },
+                    { id: 'd1-6', time: '12:00', endTime: '', type: 'food', title: '午餐：湯咖哩 奥芝商店', location: '奥芝商店 駅前創成寺', note: 'スープカレー奥芝商店', guide: '【必吃】湯咖哩名店！濃郁的蝦味湯頭是招牌。', expenses: [] },
+                    { id: 'd1-7', time: '13:00', endTime: '', type: 'food', title: '午餐：燒肉', location: '焼肉徳寿 しんら亭', note: '焼肉徳寿 しんら亭', guide: '既然來了就不要客氣！品嚐一下北海道當地的燒肉。', expenses: [] },
+                    { id: 'd1-8', time: '14:00', endTime: '', type: 'food', title: '午餐：海鮮丼', location: '札幌海鮮丼専門店 すしどんぶり', note: '札幌海鮮丼専門店 すしどんぶり', guide: '我知道很飽，但北海道的海鮮怎麼能錯過？', expenses: [] },
+                    { id: 'd1-9', time: '15:00', endTime: '15:30', type: 'transport', transportMode: '地鐵', title: '前往飯店放行李', location: 'Vessel Inn 札幌中島公園', note: '搭乘地鐵前往第一天飯店', guide: 'Vessel Inn 的早餐非常有名，今晚可以好好期待！', expenses: [] },
+                    { id: 'd1-10', time: '15:30', endTime: '16:00', type: 'transport', transportMode: '地鐵', title: '中島公園 → 北海道神宮', location: '圓山公園站', note: '中島公園→大通→圓山公園', guide: '出站後要走一段路，穿越圓山公園的雪地步道非常美。', expenses: [] },
+                    { 
+                        id: 'd1-11', time: '16:00', endTime: '17:00', type: 'sight', title: '北海道神宮', location: '北海道神宮', note: '參拜', 
+                        guide: '【必看】被雪覆蓋的神宮莊嚴又浪漫。\n\n【推薦伴手禮】：神宮限定御守(Hello Kitty/拉拉熊)、判官餅(六花亭神宮茶屋現烤)、神宮御朱印\n【推薦購物】：六花亭 神宮茶屋店', 
+                        expenses: [] 
+                    },
+                    { id: 'd1-12', time: '17:00', endTime: '17:30', type: 'transport', transportMode: '地鐵', title: '前往薄野', location: '薄野站', note: '圓山公園→大通→薄野', guide: '薄野是札幌最熱鬧的夜生活區，著名的 NIKKA 威士忌大叔招牌就在這！', expenses: [] },
+                    { id: 'd1-13', time: '18:00', endTime: '19:30', type: 'food', title: '晚餐: 涮涮鍋', location: '北海道しゃぶしゃぶ 大地', note: '北海道しゃぶしゃぶ 大地', guide: '冷冷的天氣吃暖暖的涮涮鍋最棒了。', expenses: [] },
+                    { id: 'd1-14', time: '19:30', endTime: '20:00', type: 'transport', transportMode: '地鐵', title: '薄野 → 札幌', location: '札幌車站', note: '地鐵', guide: '吃飽後稍微移動一下，準備去札幌車站大採購。', expenses: [] },
+                    { 
+                        id: 'd1-15', time: '20:00', endTime: '', type: 'sight', title: '札幌車站逛街', location: '札幌車站', note: '1.札幌農學校 2.四季花丸', 
+                        guide: '【必買】札幌農學校的現烤起司餅乾超級香！\n\n【推薦伴手禮】：札幌農學校牛奶餅乾、Press Butter Sand (北海道限定)、佐藤水產鮭魚製品\n【推薦購物】：大丸百貨 (Daimaru) 地下街、APIA 地下街', 
+                        expenses: [] 
+                    },
+                    { id: 'd1-16', time: '21:00', endTime: '', type: 'transport', transportMode: '地鐵', title: '回飯店', location: 'Vessel Inn 札幌中島公園', note: '地鐵(南北線)', guide: '玩了一整天辛苦了，回飯店休息吧。', expenses: [] },
+                    { id: 'd1-17', time: '21:30', endTime: '', type: 'food', title: '宵夜：麵屋雪風', location: '麵屋雪風', note: '拉麵', guide: '如果你還吃得下...這家可是薄野排隊名店！', expenses: [] },
+                ]
+            },
+            {
+                id: 'day2',
+                date: '1/10',
+                weekday: '週六',
+                title: '小樽一日遊',
+                weather: 'snowflake',
+                temp: '-4°C',
+                items: [
+                    { id: 'd2-1', time: '07:30', endTime: '', type: 'food', title: '飯店早餐', location: 'Vessel Inn 札幌中島公園', note: '享用早餐', guide: '這家飯店早餐是全日本排名前幾名的，請務必狂吃海鮮丼！', expenses: [] },
+                    { id: 'd2-2', time: '08:30', endTime: '', type: 'todo', title: '寄放行李', location: 'THE GATE HOTEL 札幌', note: '行李寄放第二天飯店', guide: '先去新飯店放行李，輕裝前往小樽。', expenses: [] },
+                    { id: 'd2-3', time: '09:00', endTime: '', type: 'transport', transportMode: 'JR', title: '札幌 → 小樽', location: '小樽車站', note: 'JR函館本線', guide: '搭乘 JR 時，記得盡量坐右側座位，可以看到美麗的海景喔！', expenses: [] },
+                    { 
+                        id: 'd2-4', time: '10:00', endTime: '', type: 'sight', title: '天狗山纜車', location: '小樽天狗山', note: '搭乘9號巴士往天狗山', 
+                        guide: '【必看】電影《情書》經典場景！\n\n【推薦伴手禮】：天狗山限定明信片、北海道雪兔週邊、天狗守護鈴\n【推薦購物】：山頂展望台紀念品店', 
+                        expenses: [] 
+                    },
+                    { id: 'd2-5', time: '12:00', endTime: '', type: 'food', title: '午餐：三角市場', location: '三角市場 さんかく亭', note: '海鮮丼', guide: '就在小樽車站旁，現撈現殺的海鮮超級新鮮。', expenses: [] },
+                    { id: 'd2-6', time: '13:00', endTime: '', type: 'transport', transportMode: 'JR', title: '前往南小樽', location: '南小樽車站', note: 'JR到南小樽站', guide: '從小樽搭一站到南小樽，從那邊一路逛回小樽運河是比較順路的走法。', expenses: [] },
+                    { 
+                        id: 'd2-7', time: '13:30', endTime: '16:00', type: 'sight', title: '小樽漫步', location: '小樽堺町通り商店街', note: '蒸汽鐘、商店街、運河', 
+                        guide: '蒸汽鐘每15分鐘會噴氣一次！\n\n【推薦伴手禮】：LeTAO 雙層起司蛋糕(可宅配)、北菓樓妖精之森年輪蛋糕、六花亭草莓巧克力\n【推薦購物】：小樽音樂盒堂本館、大正哨子館、SNOOPY 茶屋', 
+                        expenses: [] 
+                    },
+                    { id: 'd2-8', time: '17:30', endTime: '', type: 'transport', transportMode: 'JR', title: '小樽 → 札幌', location: '札幌車站', note: 'JR函館本線', guide: '傍晚的小樽運河點燈很美。', expenses: [] },
+                    { 
+                        id: 'd2-9', time: '17:45', endTime: '', type: 'sight', title: '札幌電視塔', location: '札幌電視塔', note: '', 
+                        guide: '回到大通公園，晚上的電視塔會打燈。\n\n【推薦伴手禮】：電視塔爸爸(TV Dad)週邊商品、北海道限定磁鐵、札幌夜景明信片\n【推薦購物】：3樓紀念品店', 
+                        expenses: [] 
+                    },
+                    { 
+                        id: 'd2-10', time: '18:00', endTime: '', type: 'sight', title: '狸小路商店街', location: '狸小路商店街', note: '', 
+                        guide: '藥妝、伴手禮一次買齊的好地方。\n\n【推薦伴手禮】：北海道限定薯條三兄弟、白色戀人、札幌農學校餅乾、北海道限定LuLuLun面膜\n【推薦購物】：唐吉訶德 (狸小路店)、Satudora (札幌藥妝)、業務超市', 
+                        expenses: [] 
+                    },
+                    { id: 'd2-11', time: '19:45', endTime: '', type: 'food', title: '晚餐：成吉思汗烤肉', location: 'しろくま 札幌成吉思汗 本店', note: '本店', guide: '【必吃】北海道靈魂美食！沒有羊騷味，只有鮮甜肉汁。', expenses: [] },
+                    { id: 'd2-12', time: '20:45', endTime: '', type: 'hotel', title: '飯店 Check-in', location: 'THE GATE HOTEL 札幌', note: '', guide: '終於可以進房休息了。', expenses: [] },
+                ]
+            },
+            {
+                id: 'day3',
+                date: '1/11',
+                weekday: '週日',
+                title: '國際滑雪場 & 藻岩山',
+                weather: 'cloudy',
+                temp: '-6°C',
+                items: [
+                    { 
+                        id: 'd3-1', time: '08:00', endTime: '12:00', type: 'sight', title: '國際滑雪場', location: '札幌国際スキー場', note: '集合點: INFINITY CITY', 
+                        guide: '這裡的粉雪品質超好！\n\n【推薦伴手禮】：滑雪場限定貼紙/徽章、北海道限定杯麵(休息時吃)、滑雪場限定毛帽\n【推薦購物】：滑雪場附設商店 (購買裝備或紀念品)', 
+                        expenses: [] 
+                    },
+                    { id: 'd3-2', time: '12:00', endTime: '13:00', type: 'food', title: '午餐', location: '札幌国際スキー場', note: '滑雪場內用餐', guide: '滑雪場的咖哩飯或拉麵在冰天雪地裡吃起來特別美味。', expenses: [] },
+                    { id: 'd3-3', time: '13:00', endTime: '16:00', type: 'sight', title: '繼續滑雪', location: '札幌国際スキー場', note: '', guide: '下午雪況可能會變，注意安全。', expenses: [] },
+                    { id: 'd3-4', time: '17:30', endTime: '', type: 'transport', transportMode: '巴士', title: '返回市區', location: 'INFINITY CITY', note: '返回 INFINITY CITY', guide: '滑完雪身體會很疲憊，回程車上好好補眠吧。', expenses: [] },
+                    { 
+                        id: 'd3-5', time: '18:10', endTime: '', type: 'sight', title: '藻岩山纜車夜景', location: '藻岩山', note: '', 
+                        guide: '【必看】日本新三大夜景之一！\n\n【推薦伴手禮】：幸福之鐘吊飾、藻岩山限定星星餅乾、夜景明信片\n【推薦購物】：山頂展望台商店「Mt.MOIWA SOUVENIR SHOP」', 
+                        expenses: [] 
+                    },
+                    { id: 'd3-6', time: '20:00', endTime: '', type: 'food', title: '晚餐：迴轉壽司', location: '回転寿し トリトン 平岸店', note: 'Toriton 壽司 (搭計程車)', guide: '這家是當地人也大排長龍的名店，食材新鮮度沒話說。', expenses: [] },
+                    { id: 'd3-7', time: '21:00', endTime: '', type: 'hotel', title: '回飯店', location: 'THE GATE HOTEL 札幌', note: '', guide: '今天運動量很大，晚上可以泡個澡放鬆肌肉。', expenses: [] },
+                ]
+            },
+            {
+                id: 'day4',
+                date: '1/12',
+                weekday: '週一',
+                title: '登別、洞爺湖',
+                weather: 'sun',
+                temp: '-1°C',
+                items: [
+                    { id: 'd4-1', time: '07:30', endTime: '08:44', type: 'transport', transportMode: 'JR', title: '札幌 → 登別', location: '登別車站', note: 'JR 北斗號', guide: '從今天開始往道南移動，JR 沿途可能會看到海。', expenses: [] },
+                    { 
+                        id: 'd4-2', time: '09:00', endTime: '', type: 'sight', title: '尼克斯海洋公園', location: '登別尼克斯海洋公園', note: '水族館', 
+                        guide: '企鵝遊行是必看重點！\n\n【推薦伴手禮】：企鵝玩偶/抱枕、海洋公園限定奶油餅乾、海豚鑰匙圈\n【推薦購物】：園區出口紀念品店', 
+                        expenses: [] 
+                    },
+                    { id: 'd4-3', time: '11:45', endTime: '11:59', type: 'transport', transportMode: '公車', title: '前往登別溫泉', location: '登別溫泉', note: '道南巴士', guide: '巴士班次固定，請【務必】準時到站牌等車。', expenses: [] },
+                    { id: 'd4-4', time: '12:00', endTime: '', type: 'food', title: '午餐：湯咖哩', location: '道産子ぷりん', note: '道産子ぷりん湯咖哩', guide: '登別溫泉街上的隱藏美食，除了湯咖哩，他們的布丁也很有名喔！', expenses: [] },
+                    { 
+                        id: 'd4-5', time: '13:00', endTime: '14:40', type: 'sight', title: '登別熊牧場', location: '登別熊牧場', note: '', 
+                        guide: '這裡的棕熊會跟遊客招手討食物吃。\n\n【推薦伴手禮】：「熊出沒注意」周邊商品(拉麵/T恤)、純正熊油保養霜、木雕熊擺飾\n【推薦購物】：山頂纜車站賣店', 
+                        expenses: [] 
+                    },
+                    { id: 'd4-6', time: '15:15', endTime: '15:27', type: 'transport', transportMode: '公車', title: '返回登別車站', location: '登別車站', note: '道南巴士', guide: '要準備去洞爺湖了，注意巴士時間。', expenses: [] },
+                    { id: 'd4-7', time: '15:59', endTime: '16:38', type: 'transport', transportMode: 'JR', title: '登別 → 洞爺湖', location: '洞爺車站', note: 'JR 北斗號', guide: '短短的車程，可以稍作休息。', expenses: [] },
+                    { id: 'd4-8', time: '17:05', endTime: '17:26', type: 'transport', transportMode: '公車', title: '洞爺車站 → 中央通', location: '洞爺湖万世閣', note: '道南巴士', guide: '抵達洞爺湖溫泉區，準備入住今晚的溫泉飯店。', expenses: [] },
+                    { id: 'd4-9', time: '17:26', endTime: '', type: 'hotel', title: '飯店 Check-in', location: '洞爺湖万世閣', note: '', guide: '万世閣的湖景很美，還有露天溫泉。', expenses: [] },
+                    { id: 'd4-10', time: '18:00', endTime: '', type: 'food', title: '晚餐', location: '洞爺湖万世閣', note: '飯店自助餐', guide: '盡情享用自助餐吧，別忘了試試北海道的甜點。', expenses: [] },
+                ]
+            },
+            {
+                id: 'day5',
+                date: '1/13',
+                weekday: '週二',
+                title: '洞爺湖、函館',
+                weather: 'cloudy',
+                temp: '0°C',
+                items: [
+                    { id: 'd5-1', time: '09:00', endTime: '09:45', type: 'sight', title: '洞爺湖汽船', location: '洞爺湖汽船', note: '走路前往', guide: '搭船遊覽洞爺湖，湖中島在冬天看別有一番風味。', expenses: [] },
+                    { id: 'd5-2', time: '10:20', endTime: '', type: 'transport', transportMode: '公車', title: '前往展望台', location: 'サイロ展望台', note: '溫泉街巴士 (10:20上車)', guide: '開始今天的巴士接力賽，時間要抓準喔！', expenses: [] },
+                    { 
+                        id: 'd5-3', time: '10:40', endTime: '10:55', type: 'sight', title: 'Silo 展望台', location: 'サイロ展望台', note: '僅停留15分鐘', 
+                        guide: '俯瞰洞爺湖全景的最佳地點。\n\n【推薦伴手禮】：洞爺湖布丁、牧家氣球布丁(Bocca)、北海道薰衣草精油\n【推薦購物】：展望台賣店 (只有15分鐘要快！)', 
+                        expenses: [] 
+                    },
+                    { id: 'd5-4', time: '10:55', endTime: '11:16', type: 'transport', transportMode: '公車', title: '前往櫻町', location: 'レストラン望羊蹄', note: '巴士 (10:55上車) 【務必】搭到此班', guide: '錯過這班車會影響後面的午餐和行程，請提前在站牌等候。', expenses: [] },
+                    { id: 'd5-5', time: '11:30', endTime: '', type: 'food', title: '午餐：望羊蹄', location: 'レストラン望羊蹄', note: '日式洋食', guide: '這家是洞爺湖非常有名的老字號洋食店，漢堡排和蛋包飯是招牌。', expenses: [] },
+                    { id: 'd5-6', time: '12:45', endTime: '13:00', type: 'transport', transportMode: '公車', title: '前往昭和新山', location: '昭和新山', note: '巴士 (12:45上車)', guide: '吃飽喝足，前往活火山昭和新山。', expenses: [] },
+                    { 
+                        id: 'd5-7', time: '13:00', endTime: '14:35', type: 'sight', title: '有珠山展望台', location: '有珠山ロープウェイ', note: '', 
+                        guide: '可以看到火山口和噴發遺跡。\n\n【推薦伴手禮】：有珠山限定T恤、火山灰洗面乳/肥皂、洞爺湖木刀(銀魂迷必買)\n【推薦購物】：火山口原創商店、昭和新山土產街', 
+                        expenses: [] 
+                    },
+                    { id: 'd5-8', time: '14:35', endTime: '14:43', type: 'transport', transportMode: '公車', title: '返回中央通', location: '洞爺湖万世閣', note: '巴士 (14:35上車) 【務必】搭到', guide: '準備回去拿行李了。', expenses: [] },
+                    { id: 'd5-9', time: '14:43', endTime: '14:53', type: 'todo', title: '拿行李', location: '洞爺湖万世閣', note: '', guide: '迅速領取行李，準備前往車站。', expenses: [] },
+                    { id: 'd5-10', time: '15:55', endTime: '16:23', type: 'transport', transportMode: '公車', title: '前往洞爺車站', location: '洞爺車站', note: '巴士 (15:55上車)', guide: '和洞爺湖說再見，前往下一個城市。', expenses: [] },
+                    { id: 'd5-11', time: '16:38', endTime: '18:30', type: 'transport', transportMode: 'JR', title: '洞爺湖 → 函館', location: '函館車站', note: 'JR 北斗號', guide: '建議在洞爺車站買點零食或便當，這段車程約兩小時。', expenses: [] },
+                    { id: 'd5-12', time: '19:00', endTime: '19:30', type: 'hotel', title: '寄放行李', location: 'La Vista 函館灣', note: '計程車或路面電車', guide: 'La Vista 的早餐是全日本第一名！今晚住這太幸福了。', expenses: [] },
+                    { 
+                        id: 'd5-13', time: '19:30', endTime: '', type: 'sight', title: '函館山夜景', location: '函館山', note: '計程車前往纜車站', 
+                        guide: '【必看】世界三大夜景！雙C地形非常迷人。\n\n【推薦伴手禮】：函館山夜景包裝巧克力、函館山限定T恤、烏賊飯真空包\n【推薦購物】：山頂商店 Cremona (2樓)', 
+                        expenses: [] 
+                    },
+                    { id: 'd5-14', time: '21:00', endTime: '', type: 'food', title: '晚餐', location: '函館', note: '鹽拉麵 あじさい 或 羊羊亭', guide: '函館的鹽味拉麵湯頭清澈鮮美，あじさい (味彩) 是名店。', expenses: [] },
+                    { id: 'd5-15', time: '22:00', endTime: '', type: 'hotel', title: '回飯店', location: 'La Vista 函館灣', note: '', guide: '晚上可以去頂樓的大浴場泡湯，還可以看著夜景吃冰棒！', expenses: [] },
+                ]
+            },
+            {
+                id: 'day6',
+                date: '1/14',
+                weekday: '週三',
+                title: '函館 (金森倉庫、五稜郭)',
+                weather: 'snow',
+                temp: '-3°C',
+                items: [
+                    { id: 'd6-1', time: '07:00', endTime: '09:00', type: 'food', title: '飯店豪華早餐', location: 'La Vista 函館灣', note: '', guide: '【必吃】重頭戲來了！鮭魚卵、甜蝦、生干貝隨你吃到飽，自製超豪華海鮮丼！', expenses: [] },
+                    { 
+                        id: 'd6-2', time: '10:00', endTime: '12:00', type: 'sight', title: '金森紅磚倉庫', location: '金森赤レンガ倉庫', note: '走路前往', 
+                        guide: '就在飯店旁邊，紅磚建築很好拍。\n\n【推薦伴手禮】：SNAFFLE\'S 起司蛋糕、Petite Merveille 一口起司蛋糕、函館武將館周邊\n【推薦購物】：金森洋物館、函館明治館', 
+                        expenses: [] 
+                    },
+                    { id: 'd6-3', time: '12:00', endTime: '13:00', type: 'food', title: '午餐：小丑漢堡', location: 'ラッキーピエロ', note: '', guide: '【必吃】函館限定！只有函館才吃得到。推薦第一名的「中華雞腿漢堡」，份量超大。', expenses: [] },
+                    { id: 'd6-4', time: '13:00', endTime: '15:00', type: 'sight', title: '逛街/採買', location: '金森赤レンガ倉庫', note: '', guide: '最後的採買機會，SNAFFLE\'S 的起司蛋糕是函館名產，可以買來當點心。', expenses: [] },
+                    { id: 'd6-5', time: '15:00', endTime: '16:00', type: 'hotel', title: '換飯店', location: 'La\'gent Stay 函館站前', note: '放行李', guide: '為了明天去機場方便，今晚住在車站旁的飯店。', expenses: [] },
+                    { 
+                        id: 'd6-6', time: '17:00', endTime: '18:30', type: 'sight', title: '五稜郭塔', location: '五稜郭タワー', note: '路面電車', 
+                        guide: '登上塔頂可以看到完整的星形堡壘五稜郭。\n\n【推薦伴手禮】：五稜郭最中餅、土方歲三相關週邊、箱館奉行所糖果\n【推薦購物】：五稜郭塔賣店 (1樓 & 展望台)', 
+                        expenses: [] 
+                    },
+                    { id: 'd6-7', time: '18:30', endTime: '20:00', type: 'food', title: '晚餐：燒肉物語', location: '焼肉物語 牛若', note: '別館', guide: '北海道之旅的最後一頓晚餐，用美味的燒肉來畫下句點吧！', expenses: [] },
+                    { id: 'd6-8', time: '20:00', endTime: '21:00', type: 'hotel', title: '回飯店', location: 'La\'gent Stay 函館站前', note: '', guide: '整理行李，把戰利品塞好塞滿。', expenses: [] },
+                ]
+            },
+            {
+                id: 'day7',
+                date: '1/15',
+                weekday: '週四',
+                title: '再見北海道',
+                weather: 'cloudy',
+                temp: '1°C',
+                items: [
+                    { id: 'd7-1', time: '08:00', endTime: '09:00', type: 'food', title: '飯店早餐', location: 'La\'gent Stay 函館站前', note: '', guide: '悠閒地吃個早餐，檢查東西有沒有帶齊。', expenses: [] },
+                    { 
+                        id: 'd7-2', time: '09:00', endTime: '11:00', type: 'transport', transportMode: 'JR', title: '前往機場', location: '函館機場', note: 'JR/巴士', 
+                        guide: '從函館車站有直達機場的巴士，比較方便不用搬行李。\n\n【推薦伴手禮】：函館散步(甜點)、烏賊德利(可以喝酒的烏賊酒壺)、函館牛奶\n【推薦購物】：函館機場國內線航廈 2F 賣店', 
+                        expenses: [] 
+                    },
+                ]
+            }
+        ];
+
+        // --- 天氣圖示元件 ---
+        const WeatherIcon = ({ type, className }) => {
+            if (type === 'sun') return <Icon name="sun" className={`text-orange-400 ${className}`} />;
+            if (type === 'cloud') return <Icon name="cloud" className={`text-gray-400 ${className}`} />;
+            if (type === 'cloud-snow' || type === 'snowflake' || type === 'snow') return <Icon name="snowflake" className={`text-blue-300 ${className}`} />;
+            return <Icon name="sun" className={`text-orange-400 ${className}`} />;
+        };
+
+        const formatCurrency = (amount) => {
+            return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }).format(amount);
+        };
+
+        const formatTWD = (amount) => {
+            return new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', maximumFractionDigits: 0 }).format(amount);
+        };
+
+        const handleGoogleMap = (location) => {
+            window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`, '_blank');
+        };
+
+        // --- 首頁元件 ---
+        const HomePage = ({ onEnter, itinerary }) => {
+            const [timeLeft, setTimeLeft] = useState('');
+
+            useEffect(() => {
+                const tripDate = new Date('2026-01-09T00:00:00');
+                const timer = setInterval(() => {
+                    const now = new Date();
+                    const diff = tripDate - now;
+                    if (diff <= 0) {
+                        setTimeLeft('旅程進行中！');
+                    } else {
+                        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                        setTimeLeft(`倒數 ${days} 天 ${hours} 小時`);
+                    }
+                }, 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            return (
+                <div className="min-h-screen relative flex flex-col items-center justify-center p-6 overflow-hidden bg-[#f7f3e8]">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-green-100 rounded-full mix-blend-multiply filter blur-3xl opacity-50 -mr-16 -mt-16 animate-pulse" />
+                    <div className="absolute bottom-0 left-0 w-64 h-64 bg-blue-100 rounded-full mix-blend-multiply filter blur-3xl opacity-50 -ml-16 -mb-16 animate-pulse" />
+                    
+                    <div className="relative z-20 w-full max-w-md glass-card rounded-[40px] shadow-2xl p-8 border border-white/50 text-center animate-fade-in">
+                        <div className="mb-4 flex justify-center">
+                            <div className="bg-[#556b2f]/10 p-4 rounded-full shadow-inner border border-[#556b2f]/20">
+                                <Icon name="plane" size={40} className="text-[#556b2f] transform -rotate-45" />
+                            </div>
+                        </div>
+                        <h1 className="text-3xl font-black text-[#556b2f] mb-1 tracking-tight">HOKKAIDO</h1>
+                        <p className="text-gray-500 text-xs font-medium tracking-[0.2em] mb-6 uppercase">1/9 - 1/15 Journey</p>
+                        
+                        <div className="bg-[#cd853f] text-white py-3 px-6 rounded-2xl mb-8 shadow-lg shadow-orange-900/10 transform rotate-1">
+                            <p className="font-bold text-lg">{timeLeft}</p>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-3 mb-6">
+                            {itinerary.map((day) => (
+                                <button key={day.id} onClick={() => onEnter(day.id)} className="bg-white/60 hover:bg-white p-3 rounded-2xl shadow-sm text-left transition-all border border-gray-100 flex items-center gap-3 group active:scale-95">
+                                    <div className="bg-[#556b2f]/10 text-[#556b2f] w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs group-hover:bg-[#556b2f] group-hover:text-white transition-colors">
+                                        {day.date.split('/')[1]}
+                                    </div>
+                                    <div className="flex flex-col overflow-hidden">
+                                        <div className="text-[10px] text-gray-400 font-bold">{day.weekday}</div>
+                                        <div className="font-bold text-gray-700 text-xs truncate">{day.title}</div>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 主應用程式 ---
+        function App() {
+            const [view, setView] = useState('home');
+            const [activeDay, setActiveDay] = useState('day1');
+            const [itinerary, setItinerary] = useState(defaultItinerary);
+            const [exchangeRate, setExchangeRate] = useState(0.22);
+            const [editMode, setEditMode] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+            const [showSettings, setShowSettings] = useState(false);
+            const [isChatOpen, setIsChatOpen] = useState(false); // AI 聊天室狀態
+            
+            // 拖曳相關狀態
+            const [draggedItemIndex, setDraggedItemIndex] = useState(null);
+
+            // 資料持久化
+            useEffect(() => {
+                const saved = localStorage.getItem('hokkaido_final_v8');
+                if (saved) {
+                    try {
+                        setItinerary(JSON.parse(saved));
+                    } catch(e) {
+                        console.error("Data Parse Error", e);
+                    }
+                }
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('hokkaido_final_v8', JSON.stringify(itinerary));
+            }, [itinerary]);
+
+            const currentDayData = useMemo(() => 
+                itinerary.find(d => d.id === activeDay) || itinerary[0]
+            , [itinerary, activeDay]);
+
+            // 計算雙幣別總計
+            const expenses = useMemo(() => {
+                let dayTotalJPY = 0;
+                let grandTotalJPY = 0;
+                
+                itinerary.forEach(day => {
+                    day.items.forEach(item => {
+                        const itemTotal = item.expenses 
+                            ? item.expenses.reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0)
+                            : (parseFloat(item.cost) || 0);
+                        
+                        grandTotalJPY += itemTotal;
+                        if (day.id === activeDay) dayTotalJPY += itemTotal;
+                    });
+                });
+
+                return { 
+                    dayTotalJPY, 
+                    dayTotalTWD: Math.round(dayTotalJPY * exchangeRate),
+                    grandTotalJPY,
+                    grandTotalTWD: Math.round(grandTotalJPY * exchangeRate)
+                };
+            }, [itinerary, activeDay, exchangeRate]);
+
+            const handleUpdateItem = (dayId, updatedItem) => {
+                setItinerary(prev => prev.map(day => {
+                    if (day.id === dayId) {
+                        return { ...day, items: day.items.map(i => i.id === updatedItem.id ? updatedItem : i) };
+                    }
+                    return day;
+                }));
+                setEditingItem(null);
+            };
+
+            const handleAddItem = (dayId) => {
+                const newItem = {
+                    id: Date.now().toString(),
+                    time: '12:00',
+                    endTime: '',
+                    type: 'todo',
+                    transportMode: '',
+                    title: '新行程',
+                    location: '',
+                    note: '',
+                    guide: '',
+                    expenses: []
+                };
+                setItinerary(prev => prev.map(day => {
+                    if (day.id === dayId) {
+                        return { ...day, items: [...day.items, newItem] }; // 新增時不自動排序，排在最後
+                    }
+                    return day;
+                }));
+                setEditingItem({...newItem, dayId});
+            };
+
+            const handleDeleteItem = (dayId, itemId) => {
+                if (confirm('確定要刪除嗎？')) {
+                    setItinerary(prev => prev.map(day => {
+                        if (day.id === dayId) {
+                            return { ...day, items: day.items.filter(i => i.id !== itemId) };
+                        }
+                        return day;
+                    }));
+                    setEditingItem(null);
+                }
+            };
+
+            // --- 拖曳處理函式 ---
+            const handleDragStart = (e, index) => {
+                setDraggedItemIndex(index);
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", index); // Firefox 需要
+                // 讓拖曳的原始元素變半透明
+                setTimeout(() => {
+                    if(e.target) e.target.classList.add('dragging');
+                }, 0);
+            };
+
+            const handleDragEnd = (e) => {
+                if(e.target) e.target.classList.remove('dragging');
+                setDraggedItemIndex(null);
+            };
+
+            const handleDragOver = (e, index) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+            };
+
+            const handleDrop = (e, dropIndex) => {
+                e.preventDefault();
+                if (draggedItemIndex === null || draggedItemIndex === dropIndex) return;
+
+                const newItinerary = [...itinerary];
+                const dayIndex = newItinerary.findIndex(d => d.id === activeDay);
+                const dayItems = [...newItinerary[dayIndex].items];
+                
+                // 移動陣列元素
+                const [draggedItem] = dayItems.splice(draggedItemIndex, 1);
+                dayItems.splice(dropIndex, 0, draggedItem);
+                
+                newItinerary[dayIndex].items = dayItems;
+                setItinerary(newItinerary);
+            };
+
+            if (view === 'home') {
+                return <HomePage itinerary={itinerary} onEnter={(id) => { setActiveDay(id); setView('itinerary'); }} />;
+            }
+
+            return (
+                <div className="min-h-screen pb-40 bg-[#f7f3e8]">
+                    {/* Header */}
+                    <header className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md shadow-sm p-4 pt-6 rounded-b-[32px] border-b border-gray-100 transition-all duration-300">
+                        <div className="max-w-md mx-auto">
+                            <div className="flex justify-between items-center mb-4">
+                                <button onClick={() => setView('home')} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-600">
+                                    <Icon name="chevron-left" size={28} />
+                                </button>
+                                <div className="text-center">
+                                    <h1 className="font-black text-[#556b2f] text-lg leading-tight">1/{currentDayData.date.split('/')[1]} ({currentDayData.weekday})</h1>
+                                    <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase">{currentDayData.title}</p>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setShowSettings(!showSettings)} className="p-2 bg-gray-50 rounded-xl text-gray-600">
+                                        <Icon name="settings" size={20} />
+                                    </button>
+                                    <button onClick={() => setEditMode(!editMode)} className={`p-2 rounded-xl transition-all shadow-md ${editMode ? 'bg-orange-500 text-white shadow-orange-200' : 'bg-white text-[#556b2f] shadow-gray-100'}`}>
+                                        <Icon name={editMode ? "check" : "edit-3"} size={20} />
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            {showSettings && (
+                                <div className="mb-4 bg-white p-4 rounded-2xl shadow-lg border border-gray-100 animate-fade-in">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <span className="text-xs font-bold text-gray-600">匯率設定 (JPY→TWD)</span>
+                                        <input type="number" step="0.001" value={exchangeRate} onChange={e => setExchangeRate(parseFloat(e.target.value))} className="bg-gray-50 rounded-lg p-2 text-right w-20 text-sm font-bold text-gray-700" />
+                                    </div>
+                                    <button onClick={() => { if(confirm('確定重置？所有修改將會消失。')) { localStorage.removeItem('hokkaido_final_v8'); window.location.reload(); }}} className="w-full py-2 bg-red-50 text-red-500 rounded-lg text-xs font-bold mt-2">
+                                        重置所有資料
+                                    </button>
+                                </div>
+                            )}
+
+                            <div className="flex overflow-x-auto gap-3 no-scrollbar pb-1 snap-x">
+                                {itinerary.map(day => (
+                                    <button 
+                                        key={day.id} 
+                                        onClick={() => setActiveDay(day.id)} 
+                                        className={`flex-shrink-0 w-12 h-14 rounded-2xl flex flex-col items-center justify-center transition-all snap-center ${activeDay === day.id ? 'bg-[#556b2f] text-white shadow-lg shadow-[#556b2f]/30' : 'bg-white text-gray-500 border border-gray-100'}`}
+                                    >
+                                        <span className="text-[10px] font-bold opacity-80">{day.date.split('/')[1]}</span>
+                                        <span className="text-sm font-black">{day.weekday.slice(1,2)}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Main Content */}
+                    <main className="pt-48 px-5 space-y-4 max-w-md mx-auto">
+                        <div className="bg-white p-4 rounded-3xl shadow-sm border border-gray-50 flex items-center justify-between">
+                             <div className="flex items-center gap-2">
+                                <WeatherIcon type={currentDayData.weather} className="w-6 h-6" />
+                                <span className="font-bold text-gray-700">{currentDayData.temp}</span>
+                             </div>
+                             <span className="text-xs text-gray-500 font-bold">今日天氣</span>
+                        </div>
+
+                        {currentDayData.items.map((item, index) => (
+                            <div key={item.id} 
+                                draggable={editMode}
+                                onDragStart={(e) => handleDragStart(e, index)}
+                                onDragOver={(e) => handleDragOver(e, index)}
+                                onDrop={(e) => handleDrop(e, index)}
+                                onDragEnd={handleDragEnd}
+                                onClick={() => editMode && setEditingItem({...item, dayId: activeDay})}
+                                className={`relative bg-white p-5 rounded-[28px] shadow-sm border border-gray-100 group transition-all select-none
+                                    ${editMode ? 'cursor-move' : 'cursor-pointer active:scale-[0.98]'}`}
+                            >
+                                <div className="flex justify-between items-start mb-3">
+                                    <div className="flex flex-col">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <div className={`w-2 h-2 rounded-full ${item.type === 'food' ? 'bg-orange-400' : 'bg-blue-400'}`} />
+                                            <span className="text-sm font-black text-gray-600 tracking-tight">
+                                                {item.time} {item.endTime ? `- ${item.endTime}` : ''}
+                                            </span>
+                                        </div>
+                                        {/* 交通方式標籤 */}
+                                        {item.type === 'transport' && item.transportMode && (
+                                            <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-bold self-start">
+                                                {item.transportMode === '飛機' ? '✈️ 飛機' : 
+                                                 item.transportMode === 'JR' ? '🚃 JR' : 
+                                                 item.transportMode === '地鐵' ? '🚇 地鐵' : 
+                                                 item.transportMode === '公車' || item.transportMode === '客運' ? '🚌 巴士' : item.transportMode}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {editMode && <Icon name="grip-vertical" size={16} className="text-gray-300" />}
+                                        <Icon name={item.type === 'food' ? 'utensils' : item.type === 'transport' ? 'train' : 'map-pin'} size={18} className="text-gray-400" />
+                                    </div>
+                                </div>
+                                
+                                <h3 className="font-bold text-gray-800 text-lg mb-2 leading-snug">{item.title}</h3>
+                                
+                                <div onClick={(e) => { e.stopPropagation(); handleGoogleMap(item.location); }} className="text-xs font-bold text-[#556b2f] mb-3 flex items-center gap-1 cursor-pointer hover:underline">
+                                    <Icon name="map-pin" size={12} /> {item.location}
+                                </div>
+                                
+                                {item.guide && (
+                                    <div className="bg-[#fdf9f0] p-3 rounded-2xl border border-[#fef3c7] mb-3">
+                                        <p className="text-xs text-[#b45309] leading-relaxed italic whitespace-pre-wrap flex gap-2">
+                                            <Icon name="message-circle" size={14} className="flex-shrink-0 mt-0.5" />
+                                            <span>{item.guide}</span>
+                                        </p>
+                                    </div>
+                                )}
+
+                                {item.expenses && item.expenses.length > 0 && (
+                                    <div className="mt-2 pt-3 border-t border-dashed border-gray-200 flex flex-wrap gap-2">
+                                        {item.expenses.map(e => (
+                                            <div key={e.id} className="bg-gray-100 px-3 py-1 rounded-full flex gap-2 items-center">
+                                                <span className="text-[10px] text-gray-600 font-medium">{e.name}</span>
+                                                <span className="text-[10px] font-bold text-gray-800">¥{e.amount}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                
+                                {editMode && (
+                                    <div className="absolute inset-0 bg-[#556b2f]/5 rounded-[28px] border-2 border-dashed border-[#556b2f]/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                        <Icon name="edit" className="text-[#556b2f]" size={32} />
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                        
+                        {editMode && (
+                            <button onClick={() => handleAddItem(activeDay)} className="w-full py-4 border-2 border-dashed border-gray-300 rounded-2xl text-gray-400 hover:border-orange-400 hover:text-orange-500 hover:bg-orange-50 flex items-center justify-center gap-2">
+                                <Icon name="plus" size={20} /> <span className="font-medium">新增此日行程</span>
+                            </button>
+                        )}
+                    </main>
+
+                    {/* AI 導遊按鈕 (Floating Action Button) */}
+                    <button 
+                        onClick={() => setIsChatOpen(true)}
+                        className="fixed bottom-24 right-5 z-40 bg-gradient-to-r from-[#556b2f] to-[#6b8c3e] text-white p-4 rounded-full shadow-2xl shadow-[#556b2f]/40 flex items-center gap-2 animate-bounce hover:scale-105 transition-transform"
+                    >
+                        <Icon name="sparkles" size={24} className="text-yellow-300" />
+                        <span className="font-bold text-sm hidden sm:inline">AI 導遊</span>
+                    </button>
+
+                    {/* AI 聊天室 */}
+                    <AIChatWidget 
+                        isOpen={isChatOpen} 
+                        onClose={() => setIsChatOpen(false)} 
+                        currentDayData={currentDayData}
+                    />
+
+                    {/* 編輯面板 */}
+                    {editingItem && (
+                        <div className="fixed inset-0 bg-black/60 z-[100] flex items-end animate-fade-in" onClick={() => setEditingItem(null)}>
+                            <div className="bg-white w-full rounded-t-[40px] p-8 space-y-6 pb-12 shadow-2xl h-[85vh] overflow-y-auto overscroll-contain" onClick={e => e.stopPropagation()}>
+                                <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-2" />
+                                <div className="flex justify-between items-center">
+                                    <h3 className="font-black text-xl text-gray-800">編輯行程</h3>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => handleDeleteItem(editingItem.dayId, editingItem.id)} className="p-2 bg-red-50 text-red-500 rounded-full"><Icon name="trash-2" size={20}/></button>
+                                        <button onClick={() => setEditingItem(null)} className="p-2 bg-gray-100 rounded-full"><Icon name="x" size={20}/></button>
+                                    </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase">開始時間</label>
+                                        <input type="time" className="w-full bg-gray-50 p-4 rounded-2xl border-none font-bold text-gray-800" value={editingItem.time} onChange={e => setEditingItem({...editingItem, time: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-gray-500 uppercase">抵達時間</label>
+                                        <input type="time" className="w-full bg-gray-50 p-4 rounded-2xl border-none font-bold text-gray-800" value={editingItem.endTime} onChange={e => setEditingItem({...editingItem, endTime: e.target.value})} />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 uppercase">類別</label>
+                                    <div className="flex gap-2 mt-1">
+                                        {['sight','food','transport','hotel'].map(t => (
+                                            <button key={t} onClick={() => setEditingItem({...editingItem, type: t})} className={`flex-1 py-3 rounded-xl transition-all ${editingItem.type === t ? 'bg-[#556b2f] text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>
+                                                <Icon name={t==='food'?'utensils':t==='transport'?'train':t==='hotel'?'home':'map-pin'} size={18} className="mx-auto"/>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {editingItem.type === 'transport' && (
+                                        <div className="mt-3">
+                                            <label className="text-[10px] font-bold text-gray-500 uppercase">交通工具</label>
+                                            <div className="flex gap-2 mt-1 overflow-x-auto pb-1 no-scrollbar">
+                                                {['飛機', 'JR', '地鐵', '公車', '客運', '走路'].map(m => (
+                                                    <button key={m} onClick={() => setEditingItem({...editingItem, transportMode: m})} className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap ${editingItem.transportMode === m ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                                                        {m}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="space-y-4">
+                                    <input className="w-full bg-gray-50 p-4 rounded-2xl border-none focus:ring-2 focus:ring-[#556b2f] font-bold text-lg text-gray-800" value={editingItem.title} onChange={e => setEditingItem({...editingItem, title: e.target.value})} placeholder="行程標題" />
+                                    <input className="w-full bg-gray-50 p-4 rounded-2xl border-none focus:ring-2 focus:ring-[#556b2f] text-sm text-gray-800" value={editingItem.location} onChange={e => setEditingItem({...editingItem, location: e.target.value})} placeholder="地點 (Google Maps 關鍵字)" />
+                                    <textarea className="w-full bg-gray-50 p-4 rounded-2xl border-none focus:ring-2 focus:ring-[#556b2f] text-sm h-32 text-gray-700 leading-relaxed" value={editingItem.guide} onChange={e => setEditingItem({...editingItem, guide: e.target.value})} placeholder="導遊小叮嚀 (可輸入伴手禮推薦...)" />
+                                </div>
+
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center px-1">
+                                        <label className="text-xs font-black text-gray-500 uppercase tracking-widest">記帳項目</label>
+                                        <button onClick={() => setEditingItem({...editingItem, expenses: [...(editingItem.expenses || []), {id: Date.now(), name: '', amount: ''}]})} className="text-xs font-bold text-[#cd853f] bg-orange-50 px-3 py-1 rounded-full">+ 新增花費</button>
+                                    </div>
+                                    <div className="space-y-2 pr-2">
+                                        {(editingItem.expenses || []).map(exp => (
+                                            <div key={exp.id} className="flex gap-2 relative group">
+                                                <input className="flex-[2] bg-gray-50 p-3 rounded-xl text-xs text-gray-700 font-bold" value={exp.name} onChange={e => {
+                                                    const newExps = editingItem.expenses.map(ex => ex.id === exp.id ? {...ex, name: e.target.value} : ex);
+                                                    setEditingItem({...editingItem, expenses: newExps});
+                                                }} placeholder="如：午餐" />
+                                                <input className="flex-1 min-w-[80px] bg-gray-50 p-3 rounded-xl text-xs font-bold text-gray-700" type="number" inputMode="decimal" value={exp.amount} onChange={e => {
+                                                    const newExps = editingItem.expenses.map(ex => ex.id === exp.id ? {...ex, amount: e.target.value} : ex);
+                                                    setEditingItem({...editingItem, expenses: newExps});
+                                                }} placeholder="¥" />
+                                                <button onClick={() => {
+                                                     const newExps = editingItem.expenses.filter(ex => ex.id !== exp.id);
+                                                     setEditingItem({...editingItem, expenses: newExps});
+                                                }} className="text-red-300 px-2 py-2"><Icon name="x" size={16}/></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <button onClick={() => handleUpdateItem(editingItem.dayId, editingItem)} className="w-full py-5 bg-[#556b2f] text-white font-black rounded-3xl shadow-xl shadow-[#556b2f]/20 transform active:scale-95 transition-all">
+                                    儲存更新
+                                </button>
+                                <div className="h-10"></div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Footer 總計 (雙幣別) */}
+                    <footer className="fixed bottom-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-xl p-4 pb-8 rounded-t-[32px] shadow-[0_-10px_40px_rgba(0,0,0,0.08)] border-t border-gray-100">
+                        <div className="max-w-md mx-auto grid grid-cols-2 gap-4">
+                            {/* 左側：本日小計 */}
+                            <div className="text-center border-r border-gray-100 pr-2">
+                                <p className="text-[10px] font-bold text-gray-400 mb-1">本日預算 (JPY / TWD)</p>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-sm font-black text-gray-700">¥{expenses.dayTotalJPY.toLocaleString()}</span>
+                                    <span className="text-xs font-bold text-gray-400">≈ NT${expenses.dayTotalTWD.toLocaleString()}</span>
+                                </div>
+                            </div>
+                            
+                            {/* 右側：旅程總計 */}
+                            <div className="text-center pl-2">
+                                <p className="text-[10px] font-bold text-gray-400 mb-1">旅程總計 (JPY / TWD)</p>
+                                <div className="flex flex-col items-center">
+                                    <span className="text-sm font-black text-[#556b2f]">¥{expenses.grandTotalJPY.toLocaleString()}</span>
+                                    <span className="text-xs font-bold text-[#8fa06f]">≈ NT${expenses.grandTotalTWD.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
